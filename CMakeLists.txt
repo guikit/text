@@ -23,25 +23,67 @@ if (NOT TARGET guikit::core)
 endif()
 
 function(_guikit_text_add_bundled_freetype)
-    set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
-    set(FT_DISABLE_ZLIB ON)
-    set(FT_DISABLE_BZIP2 ON)
-    set(FT_DISABLE_PNG ON)
-    set(FT_DISABLE_HARFBUZZ ON)
-    set(FT_DISABLE_BROTLI ON)
-    set(BUILD_SHARED_LIBS OFF)
-    set(SKIP_INSTALL_ALL ON)
-    if (GUIKIT_TEXT_INSTALL)
-        add_subdirectory(third_party/freetype)
+    set(_FT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype")
+    set(_FT_GEN_INC "${CMAKE_CURRENT_BINARY_DIR}/freetype_config")
+    set(_FT_OPT_OUT "${_FT_GEN_INC}/freetype/config/ftoption.h")
+
+    # Disable bundled zlib/WOFF1 decompressor cleanly so src/gzip/ftgzip.c is not needed
+    file(READ "${_FT_ROOT}/include/freetype/config/ftoption.h" _FT_OPT_CONTENT)
+    string(REPLACE
+        "#define FT_CONFIG_OPTION_USE_ZLIB"
+        "/* #define FT_CONFIG_OPTION_USE_ZLIB */"
+        _FT_OPT_CONTENT
+        "${_FT_OPT_CONTENT}"
+    )
+    if (EXISTS "${_FT_OPT_OUT}")
+        file(READ "${_FT_OPT_OUT}" _FT_OPT_OLD)
     else()
-        add_subdirectory(third_party/freetype EXCLUDE_FROM_ALL)
+        set(_FT_OPT_OLD "")
     endif()
+    if (NOT (_FT_OPT_OLD STREQUAL _FT_OPT_CONTENT))
+        file(MAKE_DIRECTORY "${_FT_GEN_INC}/freetype/config")
+        file(WRITE "${_FT_OPT_OUT}" "${_FT_OPT_CONTENT}")
+    endif()
+
+    # Minimal modern FreeType build: TTF/TTC + OTF (CFF) + autofit + smooth/Harmony LCD + embolden (14 files vs 42)
+    add_library(guikit_freetype STATIC
+        "${_FT_ROOT}/src/base/ftbase.c"
+        "${_FT_ROOT}/src/base/ftbitmap.c"
+        "${_FT_ROOT}/src/base/ftdebug.c"
+        "${_FT_ROOT}/src/base/ftinit.c"
+        "${_FT_ROOT}/src/base/ftmm.c"
+        "${_FT_ROOT}/src/base/ftsynth.c"
+        "${_FT_ROOT}/src/base/ftsystem.c"
+        "${_FT_ROOT}/src/autofit/autofit.c"
+        "${_FT_ROOT}/src/sfnt/sfnt.c"
+        "${_FT_ROOT}/src/truetype/truetype.c"
+        "${_FT_ROOT}/src/cff/cff.c"
+        "${_FT_ROOT}/src/psaux/psaux.c"
+        "${_FT_ROOT}/src/pshinter/pshinter.c"
+        "${_FT_ROOT}/src/psnames/psnames.c"
+        "${_FT_ROOT}/src/smooth/smooth.c"
+    )
+    target_compile_definitions(guikit_freetype PRIVATE FT2_BUILD_LIBRARY)
+    if (MSVC)
+        target_compile_definitions(guikit_freetype PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+        target_compile_options(guikit_freetype PRIVATE /W0)
+    else()
+        set_target_properties(guikit_freetype PROPERTIES C_VISIBILITY_PRESET hidden)
+        target_compile_options(guikit_freetype PRIVATE -w)
+    endif()
+    # Order matters: generated ftoption.h + minimal ftmodule.h override upstream defaults without modifying submodule
+    target_include_directories(guikit_freetype
+        PUBLIC
+            $<BUILD_INTERFACE:${_FT_GEN_INC}>
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/config>
+            $<BUILD_INTERFACE:${_FT_ROOT}/include>
+    )
 endfunction()
 
 set(GUIKIT_TEXT_BUNDLED_FREETYPE OFF)
 set(GUIKIT_TEXT_FREETYPE_ENABLED OFF)
 if (GUIKIT_TEXT_USE_FREETYPE)
-    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype/CMakeLists.txt")
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype/src/base/ftbase.c")
         set(GUIKIT_TEXT_BUNDLED_FREETYPE ON)
         set(GUIKIT_TEXT_FREETYPE_ENABLED ON)
         _guikit_text_add_bundled_freetype()
@@ -70,7 +112,7 @@ if (GUIKIT_TEXT_FREETYPE_ENABLED)
     )
     target_compile_definitions(guikit_text PUBLIC GUIKIT_HAS_FREETYPE=1)
     if (GUIKIT_TEXT_BUNDLED_FREETYPE)
-        target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE freetype)
+        target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE guikit_freetype)
     else()
         target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE Freetype::Freetype)
     endif()
@@ -99,8 +141,8 @@ if (GUIKIT_TEXT_INSTALL)
     include(CMakePackageConfigHelpers)
 
     set(_GUIKIT_TEXT_EXPORT_TARGETS guikit_text)
-    if (GUIKIT_TEXT_BUNDLED_FREETYPE AND TARGET freetype)
-        list(APPEND _GUIKIT_TEXT_EXPORT_TARGETS freetype)
+    if (GUIKIT_TEXT_BUNDLED_FREETYPE AND TARGET guikit_freetype)
+        list(APPEND _GUIKIT_TEXT_EXPORT_TARGETS guikit_freetype)
     endif()
 
     install(TARGETS ${_GUIKIT_TEXT_EXPORT_TARGETS}
