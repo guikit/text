@@ -19,10 +19,10 @@ class FreeTypeTextEngine {
 public:
     /// Vertical typographic metrics for a resolved font face at a specific pixel size.
     struct FontMetrics {
-        float ascentPx{0.0f};
-        float descentPx{0.0f};
-        float lineHeightPx{0.0f};
-        float capHeightPx{0.0f};
+        keel::f32 ascentPx{0.0f};
+        keel::f32 descentPx{0.0f};
+        keel::f32 lineHeightPx{0.0f};
+        keel::f32 capHeightPx{0.0f};
     };
 
     /// Non-owning view into a cached rasterized glyph bitmap (1 byte/px Grayscale or 3 bytes/px LCD RGB).
@@ -34,7 +34,7 @@ public:
         keel::u16 strideBytes{0};
         keel::i16 bearingX{0};
         keel::i16 bearingY{0};
-        float advancePx{0.0f};
+        keel::f32 advancePx{0.0f};
         bool isSubpixel{false};
         bool empty{true};
     };
@@ -60,17 +60,17 @@ public:
 
     /// Queries scaled typographic metrics (ascent, descent, lineHeight, capHeight) for a font style.
     [[nodiscard]] bool GetFontMetrics(
-        float scaledFontSizePx,
+        keel::f32 scaledFontSizePx,
         FontStyle style,
         FontHinting hinting,
         FontMetrics& outMetrics
     );
 
     /// Returns horizontal kerning adjustment in pixels between two Unicode codepoints.
-    [[nodiscard]] float GetKerningPx(
+    [[nodiscard]] keel::f32 GetKerningPx(
         keel::u32 prevCodepoint,
         keel::u32 codepoint,
-        float scaledFontSizePx,
+        keel::f32 scaledFontSizePx,
         FontStyle style,
         FontHinting hinting
     );
@@ -78,7 +78,7 @@ public:
     /// Rasterizes (or fetches from the internal LRU cache) a single Unicode codepoint for GPU texture atlas upload.
     [[nodiscard]] bool RasterizeCodepoint(
         keel::u32 codepoint,
-        float scaledFontSizePx,
+        keel::f32 scaledFontSizePx,
         FontStyle style,
         FontHinting hinting,
         bool subpixel,
@@ -89,7 +89,7 @@ public:
     /// Measures single-line UTF-8 text width and line box height at `scaledFontSizePx`.
     [[nodiscard]] Vec2 MeasureText(
         keel::StringRef text,
-        float scaledFontSizePx,
+        keel::f32 scaledFontSizePx,
         FontStyle style,
         FontHinting hinting
     );
@@ -101,14 +101,14 @@ public:
         keel::u32 dstH,
         keel::u32 dstStride,
         keel::StringRef text,
-        float posX,
-        float posY,
-        float scaledFontSizePx,
+        keel::f32 posX,
+        keel::f32 posY,
+        keel::f32 scaledFontSizePx,
         Color color,
         FontStyle style,
         Rect clipPx,
         const TextRenderSettings& settings,
-        float canvasScale
+        keel::f32 canvasScale
     );
 
     /// Draws single-line UTF-8 text aligned inside `boundsPx` using true cap-height centering.
@@ -119,14 +119,14 @@ public:
         keel::u32 dstStride,
         keel::StringRef text,
         Rect boundsPx,
-        float scaledFontSizePx,
+        keel::f32 scaledFontSizePx,
         Color color,
         FontStyle style,
-        float alignX,
-        float alignY,
+        keel::f32 alignX,
+        keel::f32 alignY,
         Rect clipPx,
         const TextRenderSettings& settings,
-        float canvasScale
+        keel::f32 canvasScale
     );
 
     /// Releases cached glyph bitmaps while keeping loaded font faces alive.
@@ -171,10 +171,10 @@ private:
 
     struct GlyphKeyHash {
         keel::u64 operator()(const GlyphKey& k) const noexcept {
-            keel::u64 h = static_cast<keel::u64>(k.glyphIndex);
-            h ^= (static_cast<keel::u64>(k.sizeQ4) |
-                  (static_cast<keel::u64>(k.slotIndex) << 16) |
-                  (static_cast<keel::u64>(k.flags) << 24)) * 0x9e3779b97f4a7c15ULL;
+            keel::u64 h = keel::as<keel::u64>(k.glyphIndex);
+            h ^= (keel::as<keel::u64>(k.sizeQ4) |
+                  (keel::as<keel::u64>(k.slotIndex) << 16) |
+                  (keel::as<keel::u64>(k.flags) << 24)) * 0x9e3779b97f4a7c15ULL;
             h ^= h >> 33;
             return h * 0xff51afd7ed558ccdULL;
         }
@@ -187,7 +187,7 @@ private:
         keel::u16 strideBytes{0};
         keel::i16 bearingX{0};
         keel::i16 bearingY{0};
-        float advancePx{0.0f};
+        keel::f32 advancePx{0.0f};
         bool isSubpixel{false};
         bool empty{false};
     };

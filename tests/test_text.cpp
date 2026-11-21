@@ -56,7 +56,7 @@ int main() {
 
     // 3. GPU-atlas glyph rasterization (Grayscale 1 Bpp & LCD Subpixel 3 Bpp)
     FreeTypeTextEngine::RasterizedGlyph grayGlyph{};
-    CHECK(ft.RasterizeCodepoint(static_cast<keel::u32>('A'), 16.0f, FontStyle::Regular, FontHinting::Light, false, 0u, grayGlyph));
+    CHECK(ft.RasterizeCodepoint(keel::as<keel::u32>('A'), 16.0f, FontStyle::Regular, FontHinting::Light, false, 0u, grayGlyph));
     CHECK(!grayGlyph.empty && grayGlyph.bitmap != nullptr);
     CHECK(!grayGlyph.isSubpixel);
     CHECK(grayGlyph.width > 4u && grayGlyph.height > 6u);
@@ -64,7 +64,7 @@ int main() {
     CHECK(grayGlyph.advancePx > 4.0f);
 
     FreeTypeTextEngine::RasterizedGlyph lcdGlyph{};
-    CHECK(ft.RasterizeCodepoint(static_cast<keel::u32>('A'), 16.0f, FontStyle::Regular, FontHinting::Light, true, 0u, lcdGlyph));
+    CHECK(ft.RasterizeCodepoint(keel::as<keel::u32>('A'), 16.0f, FontStyle::Regular, FontHinting::Light, true, 0u, lcdGlyph));
     CHECK(!lcdGlyph.empty && lcdGlyph.bitmap != nullptr);
     CHECK(lcdGlyph.isSubpixel);
     CHECK(lcdGlyph.strideBytes == lcdGlyph.width * 3u);
@@ -79,7 +79,7 @@ int main() {
     const TextRenderSettings sGray{.smoothing = FontSmoothing::Grayscale, .hinting = FontHinting::Light};
     const TextRenderSettings sRgb{.smoothing = FontSmoothing::SubpixelRGB, .hinting = FontHinting::Light};
     const TextRenderSettings sBgr{.smoothing = FontSmoothing::SubpixelBGR, .hinting = FontHinting::Light};
-    const Rect clip(0.0f, 0.0f, static_cast<float>(W), static_cast<float>(H));
+    const Rect clip(0.0f, 0.0f, keel::as<keel::f32>(W), keel::as<keel::f32>(H));
     const Color white(255, 255, 255, 255);
 
     CHECK(ft.DrawText(fbGray.data(), W, H, W, "Hello 123", 8.0f, 10.0f, 14.0f, white, FontStyle::Regular, clip, sGray, 1.0f));

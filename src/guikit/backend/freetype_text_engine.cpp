@@ -14,12 +14,12 @@ namespace guikit {
 namespace {
 
 [[nodiscard]] constexpr keel::usize StyleToSlot(FontStyle style) noexcept {
-    const auto idx = static_cast<keel::usize>(style);
+    const auto idx = keel::as<keel::usize>(style);
     return (idx < 5u) ? idx : 0u;
 }
 
-[[nodiscard]] constexpr keel::u16 QuantizeSizeQ4(float scaledFontSizePx) noexcept {
-    return static_cast<keel::u16>(keel::clamp(keel::round_i32(scaledFontSizePx * 4.0f), 4, 2048));
+[[nodiscard]] constexpr keel::u16 QuantizeSizeQ4(keel::f32 scaledFontSizePx) noexcept {
+    return keel::as<keel::u16>(keel::clamp(keel::round_i32(scaledFontSizePx * 4.0f), 4, 2048));
 }
 
 [[nodiscard]] constexpr keel::u8 PackGlyphFlags(
@@ -29,9 +29,9 @@ namespace {
     bool synthBold,
     bool synthItalic
 ) noexcept {
-    keel::u8 f = static_cast<keel::u8>(static_cast<keel::u8>(hinting) & 0x03u);
+    keel::u8 f = keel::as<keel::u8>(keel::as<keel::u8>(hinting) & 0x03u);
     if (subpixel) f |= (1u << 2);
-    f |= static_cast<keel::u8>((phase & 0x03u) << 3);
+    f |= keel::as<keel::u8>((phase & 0x03u) << 3);
     if (synthBold) f |= (1u << 5);
     if (synthItalic) f |= (1u << 6);
     return f;
@@ -91,7 +91,7 @@ bool FreeTypeTextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle
     const FT_Error err = FT_New_Memory_Face(
         m_library,
         reinterpret_cast<const FT_Byte*>(bufPtr),
-        static_cast<FT_Long>(bufSize),
+        keel::as<FT_Long>(bufSize),
         0,
         &newFace
     );
@@ -143,7 +143,7 @@ bool FreeTypeTextEngine::LoadDefaultEmbeddedFonts() {
 }
 
 bool FreeTypeTextEngine::GetFontMetrics(
-    float scaledFontSizePx,
+    keel::f32 scaledFontSizePx,
     FontStyle style,
     FontHinting hinting,
     FontMetrics& outMetrics
@@ -162,29 +162,29 @@ bool FreeTypeTextEngine::GetFontMetrics(
     }
     FT_Face face = rf.slot->face;
     if (face->units_per_EM > 0u && face->ascender > face->descender) {
-        const float scale = scaledFontSizePx / static_cast<float>(face->units_per_EM);
-        outMetrics.ascentPx = static_cast<float>(face->ascender) * scale;
-        outMetrics.descentPx = static_cast<float>(-face->descender) * scale;
-        outMetrics.lineHeightPx = static_cast<float>(face->ascender - face->descender) * scale;
+        const keel::f32 scale = scaledFontSizePx / keel::as<keel::f32>(face->units_per_EM);
+        outMetrics.ascentPx = keel::as<keel::f32>(face->ascender) * scale;
+        outMetrics.descentPx = keel::as<keel::f32>(-face->descender) * scale;
+        outMetrics.lineHeightPx = keel::as<keel::f32>(face->ascender - face->descender) * scale;
     } else {
-        outMetrics.ascentPx = static_cast<float>(face->size->metrics.ascender) / 64.0f;
-        outMetrics.descentPx = static_cast<float>(-face->size->metrics.descender) / 64.0f;
+        outMetrics.ascentPx = keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f;
+        outMetrics.descentPx = keel::as<keel::f32>(-face->size->metrics.descender) / 64.0f;
         outMetrics.lineHeightPx = scaledFontSizePx * 1.25f;
     }
-    const keel::u32 capIdx = FT_Get_Char_Index(face, static_cast<keel::u32>('H'));
+    const keel::u32 capIdx = FT_Get_Char_Index(face, keel::as<keel::u32>('H'));
     if (capIdx != 0u) {
         const GlyphEntry& capG = ResolveGlyph(rf, capIdx, sizeQ4, hinting, false, 0u);
-        outMetrics.capHeightPx = (capG.bearingY > 0) ? static_cast<float>(capG.bearingY) : (scaledFontSizePx * 0.72f);
+        outMetrics.capHeightPx = (capG.bearingY > 0) ? keel::as<keel::f32>(capG.bearingY) : (scaledFontSizePx * 0.72f);
     } else {
         outMetrics.capHeightPx = scaledFontSizePx * 0.72f;
     }
     return true;
 }
 
-float FreeTypeTextEngine::GetKerningPx(
+keel::f32 FreeTypeTextEngine::GetKerningPx(
     keel::u32 prevCodepoint,
     keel::u32 codepoint,
-    float scaledFontSizePx,
+    keel::f32 scaledFontSizePx,
     FontStyle style,
     FontHinting hinting
 ) {
@@ -213,12 +213,12 @@ float FreeTypeTextEngine::GetKerningPx(
     if (FT_Get_Kerning(face, g1, g2, kernMode, &kern) != 0) {
         return 0.0f;
     }
-    return static_cast<float>(kern.x) / 64.0f;
+    return keel::as<keel::f32>(kern.x) / 64.0f;
 }
 
 bool FreeTypeTextEngine::RasterizeCodepoint(
     keel::u32 codepoint,
-    float scaledFontSizePx,
+    keel::f32 scaledFontSizePx,
     FontStyle style,
     FontHinting hinting,
     bool subpixel,
@@ -270,7 +270,7 @@ FreeTypeTextEngine::ResolvedFace FreeTypeTextEngine::ResolveFace(FontStyle style
     if (m_faces[idx].face != nullptr) {
         return ResolvedFace{
             .slot = &m_faces[idx],
-            .slotIndex = static_cast<keel::u8>(idx),
+            .slotIndex = keel::as<keel::u8>(idx),
             .synthBold = false,
             .synthItalic = false
         };
@@ -281,7 +281,7 @@ FreeTypeTextEngine::ResolvedFace FreeTypeTextEngine::ResolveFace(FontStyle style
         if (m_faces[boldIdx].face != nullptr) {
             return ResolvedFace{
                 .slot = &m_faces[boldIdx],
-                .slotIndex = static_cast<keel::u8>(boldIdx),
+                .slotIndex = keel::as<keel::u8>(boldIdx),
                 .synthBold = false,
                 .synthItalic = true
             };
@@ -290,7 +290,7 @@ FreeTypeTextEngine::ResolvedFace FreeTypeTextEngine::ResolveFace(FontStyle style
         if (m_faces[italIdx].face != nullptr) {
             return ResolvedFace{
                 .slot = &m_faces[italIdx],
-                .slotIndex = static_cast<keel::u8>(italIdx),
+                .slotIndex = keel::as<keel::u8>(italIdx),
                 .synthBold = true,
                 .synthItalic = false
             };
@@ -313,7 +313,7 @@ bool FreeTypeTextEngine::EnsureFaceSize(FaceSlot& slot, keel::u16 sizeQ4) noexce
     if (!slot.face) return false;
     if (slot.currentSizeQ4 == sizeQ4) return true;
     // sizeQ4 is in quarter-pixels; FT_F26Dot6 is 1/64 px -> multiply by 16
-    const FT_F26Dot6 charHeight = static_cast<FT_F26Dot6>(sizeQ4) * 16;
+    const FT_F26Dot6 charHeight = keel::as<FT_F26Dot6>(sizeQ4) * 16;
     if (FT_Set_Char_Size(slot.face, 0, charHeight, 72, 72) != 0) {
         return false;
     }
@@ -329,7 +329,7 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
     bool subpixel,
     keel::u8 phase
 ) {
-    const keel::u8 effPhase = UsesSubpixelPhase(hinting) ? static_cast<keel::u8>(phase & 0x03u) : 0u;
+    const keel::u8 effPhase = UsesSubpixelPhase(hinting) ? keel::as<keel::u8>(phase & 0x03u) : 0u;
     const GlyphKey key{
         .glyphIndex = glyphIndex,
         .sizeQ4 = sizeQ4,
@@ -352,9 +352,9 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
 
         FT_Matrix mat{0x10000L, 0L, 0L, 0x10000L};
         if (rf.synthItalic) {
-            mat.xy = static_cast<FT_Fixed>(0.18f * 65536.0f);
+            mat.xy = keel::as<FT_Fixed>(0.18f * 65536.0f);
         }
-        FT_Vector delta{static_cast<FT_Pos>(effPhase) * 16, 0};
+        FT_Vector delta{keel::as<FT_Pos>(effPhase) * 16, 0};
         FT_Set_Transform(face, &mat, &delta);
 
         FT_Int32 loadFlags = FT_LOAD_DEFAULT;
@@ -374,9 +374,9 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
 
             // Record advance before rendering (unhinted linear advance for None/Light, hinted advance for Normal)
             if (UsesSubpixelPhase(hinting) && gslot->linearHoriAdvance > 0) {
-                entry.advancePx = static_cast<float>(gslot->linearHoriAdvance) / 65536.0f;
+                entry.advancePx = keel::as<keel::f32>(gslot->linearHoriAdvance) / 65536.0f;
             } else {
-                entry.advancePx = static_cast<float>(gslot->advance.x) / 64.0f;
+                entry.advancePx = keel::as<keel::f32>(gslot->advance.x) / 64.0f;
             }
             if (rf.synthBold) {
                 entry.advancePx += 0.35f;
@@ -391,22 +391,22 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
                     const keel::u32 pixelH = bm.rows;
                     if (pixelW > 0u && pixelH > 0u) {
                         const keel::u32 rowBytes = isLcdBm ? (pixelW * 3u) : pixelW;
-                        entry.width = static_cast<keel::u16>(pixelW);
-                        entry.height = static_cast<keel::u16>(pixelH);
-                        entry.strideBytes = static_cast<keel::u16>(rowBytes);
-                        entry.bearingX = static_cast<keel::i16>(gslot->bitmap_left);
-                        entry.bearingY = static_cast<keel::i16>(gslot->bitmap_top);
+                        entry.width = keel::as<keel::u16>(pixelW);
+                        entry.height = keel::as<keel::u16>(pixelH);
+                        entry.strideBytes = keel::as<keel::u16>(rowBytes);
+                        entry.bearingX = keel::as<keel::i16>(gslot->bitmap_left);
+                        entry.bearingY = keel::as<keel::i16>(gslot->bitmap_top);
                         entry.isSubpixel = isLcdBm;
                         entry.empty = false;
-                        entry.bitmap.resize(static_cast<keel::usize>(rowBytes) * static_cast<keel::usize>(pixelH));
+                        entry.bitmap.resize(keel::as<keel::usize>(rowBytes) * keel::as<keel::usize>(pixelH));
 
                         const keel::i32 pitch = bm.pitch;
                         for (keel::u32 row = 0u; row < pixelH; ++row) {
                             const keel::u8* srcRow = (pitch >= 0)
-                                ? (bm.buffer + static_cast<keel::usize>(row) * static_cast<keel::usize>(pitch))
-                                : (bm.buffer + static_cast<keel::usize>(pixelH - 1u - row) * static_cast<keel::usize>(-pitch));
+                                ? (bm.buffer + keel::as<keel::usize>(row) * keel::as<keel::usize>(pitch))
+                                : (bm.buffer + keel::as<keel::usize>(pixelH - 1u - row) * keel::as<keel::usize>(-pitch));
                             std::memcpy(
-                                entry.bitmap.data() + static_cast<keel::usize>(row) * static_cast<keel::usize>(rowBytes),
+                                entry.bitmap.data() + keel::as<keel::usize>(row) * keel::as<keel::usize>(rowBytes),
                                 srcRow,
                                 rowBytes
                             );
@@ -437,7 +437,7 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
         if (m_glyphNodes.capacity() == 0u) {
             m_glyphNodes.reserve(512u);
         }
-        slotIdx = static_cast<keel::u32>(m_glyphNodes.size());
+        slotIdx = keel::as<keel::u32>(m_glyphNodes.size());
         m_glyphNodes.push_back(GlyphNode{
             .key = key,
             .entry = keel::move(entry),
@@ -454,7 +454,7 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
 
 Vec2 FreeTypeTextEngine::MeasureText(
     keel::StringRef text,
-    float scaledFontSizePx,
+    keel::f32 scaledFontSizePx,
     FontStyle style,
     FontHinting hinting
 ) {
@@ -477,14 +477,14 @@ Vec2 FreeTypeTextEngine::MeasureText(
     const bool subPhase = UsesSubpixelPhase(hinting);
     const FT_UInt kernMode = subPhase ? FT_KERNING_UNFITTED : FT_KERNING_DEFAULT;
 
-    float totalAdvance = 0.0f;
+    keel::f32 totalAdvance = 0.0f;
     keel::u32 prevGlyph = 0u;
     keel::usize offset = 0u;
     while (offset < text.size()) {
         const keel::u32 cp = keel::utf8_decode_next(text, offset);
         if (cp == '\n' || cp == '\r') continue;
         if (cp == '\t') {
-            const keel::u32 spIdx = FT_Get_Char_Index(face, static_cast<keel::u32>(' '));
+            const keel::u32 spIdx = FT_Get_Char_Index(face, keel::as<keel::u32>(' '));
             const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, hinting, false, 0u);
             totalAdvance += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
@@ -494,7 +494,7 @@ Vec2 FreeTypeTextEngine::MeasureText(
         if (hasKerning && prevGlyph != 0u && glyphIdx != 0u) {
             FT_Vector kern{};
             if (FT_Get_Kerning(face, prevGlyph, glyphIdx, kernMode, &kern) == 0) {
-                totalAdvance += static_cast<float>(kern.x) / 64.0f;
+                totalAdvance += keel::as<keel::f32>(kern.x) / 64.0f;
             }
         }
         const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, hinting, false, 0u);
@@ -502,8 +502,8 @@ Vec2 FreeTypeTextEngine::MeasureText(
         prevGlyph = glyphIdx;
     }
 
-    const float glyphBoxH = (face->units_per_EM > 0u && face->ascender > face->descender)
-        ? (scaledFontSizePx * static_cast<float>(face->ascender - face->descender) / static_cast<float>(face->units_per_EM))
+    const keel::f32 glyphBoxH = (face->units_per_EM > 0u && face->ascender > face->descender)
+        ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender - face->descender) / keel::as<keel::f32>(face->units_per_EM))
         : (scaledFontSizePx * 1.25f);
     return {totalAdvance, glyphBoxH};
 }
@@ -514,14 +514,14 @@ bool FreeTypeTextEngine::DrawText(
     keel::u32 dstH,
     keel::u32 dstStride,
     keel::StringRef text,
-    float posX,
-    float posY,
-    float scaledFontSizePx,
+    keel::f32 posX,
+    keel::f32 posY,
+    keel::f32 scaledFontSizePx,
     Color color,
     FontStyle style,
     Rect clipPx,
     const TextRenderSettings& settings,
-    float canvasScale
+    keel::f32 canvasScale
 ) {
     if (!dstBuffer || text.empty() || scaledFontSizePx <= 0.0f || color.a == 0u) {
         return true;
@@ -538,9 +538,9 @@ bool FreeTypeTextEngine::DrawText(
     }
 
     FT_Face face = rf.slot->face;
-    const float ascPx = (face->units_per_EM > 0u && face->ascender > 0)
-        ? (scaledFontSizePx * static_cast<float>(face->ascender) / static_cast<float>(face->units_per_EM))
-        : (static_cast<float>(face->size->metrics.ascender) / 64.0f);
+    const keel::f32 ascPx = (face->units_per_EM > 0u && face->ascender > 0)
+        ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender) / keel::as<keel::f32>(face->units_per_EM))
+        : (keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f);
     const keel::i32 baselineY = keel::round_i32(posY + ascPx);
 
     const FontSmoothing effSmooth = TextCompositor::ResolveEffectiveSmoothing(settings.smoothing, canvasScale);
@@ -550,7 +550,7 @@ bool FreeTypeTextEngine::DrawText(
     const bool hasKerning = FT_HAS_KERNING(face) != 0;
     const FT_UInt kernMode = subPhase ? FT_KERNING_UNFITTED : FT_KERNING_DEFAULT;
 
-    float penX = posX;
+    keel::f32 penX = posX;
     keel::u32 prevGlyph = 0u;
     keel::usize offset = 0u;
 
@@ -558,7 +558,7 @@ bool FreeTypeTextEngine::DrawText(
         const keel::u32 cp = keel::utf8_decode_next(text, offset);
         if (cp == '\n' || cp == '\r') continue;
         if (cp == '\t') {
-            const keel::u32 spIdx = FT_Get_Char_Index(face, static_cast<keel::u32>(' '));
+            const keel::u32 spIdx = FT_Get_Char_Index(face, keel::as<keel::u32>(' '));
             const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, settings.hinting, false, 0u);
             penX += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
@@ -569,7 +569,7 @@ bool FreeTypeTextEngine::DrawText(
         if (hasKerning && prevGlyph != 0u && glyphIdx != 0u) {
             FT_Vector kern{};
             if (FT_Get_Kerning(face, prevGlyph, glyphIdx, kernMode, &kern) == 0) {
-                penX += static_cast<float>(kern.x) / 64.0f;
+                penX += keel::as<keel::f32>(kern.x) / 64.0f;
             }
         }
 
@@ -579,7 +579,7 @@ bool FreeTypeTextEngine::DrawText(
             // Quantize penX to nearest quarter-pixel [0, 0.25, 0.5, 0.75]
             const keel::i32 qx = keel::round_i32(penX * 4.0f);
             cellX = qx >> 2;
-            phase = static_cast<keel::u8>(qx & 3);
+            phase = keel::as<keel::u8>(qx & 3);
         } else {
             cellX = keel::round_i32(penX);
         }
@@ -617,14 +617,14 @@ bool FreeTypeTextEngine::DrawTextBox(
     keel::u32 dstStride,
     keel::StringRef text,
     Rect boundsPx,
-    float scaledFontSizePx,
+    keel::f32 scaledFontSizePx,
     Color color,
     FontStyle style,
-    float alignX,
-    float alignY,
+    keel::f32 alignX,
+    keel::f32 alignY,
     Rect clipPx,
     const TextRenderSettings& settings,
-    float canvasScale
+    keel::f32 canvasScale
 ) {
     if (!dstBuffer || text.empty() || scaledFontSizePx <= 0.0f || color.a == 0u) {
         return true;
@@ -641,24 +641,24 @@ bool FreeTypeTextEngine::DrawTextBox(
     }
 
     FT_Face face = rf.slot->face;
-    const float ascPx = (face->units_per_EM > 0u && face->ascender > 0)
-        ? (scaledFontSizePx * static_cast<float>(face->ascender) / static_cast<float>(face->units_per_EM))
-        : (static_cast<float>(face->size->metrics.ascender) / 64.0f);
+    const keel::f32 ascPx = (face->units_per_EM > 0u && face->ascender > 0)
+        ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender) / keel::as<keel::f32>(face->units_per_EM))
+        : (keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f);
 
     // Measure cap-height ('H') for optically centered vertical placement inside buttons/inputs/tabs
-    const keel::u32 capIdx = FT_Get_Char_Index(face, static_cast<keel::u32>('H'));
+    const keel::u32 capIdx = FT_Get_Char_Index(face, keel::as<keel::u32>('H'));
     const GlyphEntry& capGlyph = ResolveGlyph(rf, capIdx, sizeQ4, settings.hinting, false, 0u);
-    const float capH = (!capGlyph.empty && capGlyph.height > 0u)
-        ? static_cast<float>(capGlyph.height)
+    const keel::f32 capH = (!capGlyph.empty && capGlyph.height > 0u)
+        ? keel::as<keel::f32>(capGlyph.height)
         : (scaledFontSizePx * 0.72f);
-    const float capBearingY = (!capGlyph.empty && capGlyph.bearingY > 0)
-        ? static_cast<float>(capGlyph.bearingY)
+    const keel::f32 capBearingY = (!capGlyph.empty && capGlyph.bearingY > 0)
+        ? keel::as<keel::f32>(capGlyph.bearingY)
         : capH;
 
-    const float totalW = MeasureText(text, scaledFontSizePx, style, settings.hinting).x;
-    const float startX = boundsPx.x + (boundsPx.w - totalW) * alignX;
-    const float baselineY = boundsPx.y + (boundsPx.h - capH) * alignY + capBearingY;
-    const float topY = baselineY - ascPx;
+    const keel::f32 totalW = MeasureText(text, scaledFontSizePx, style, settings.hinting).x;
+    const keel::f32 startX = boundsPx.x + (boundsPx.w - totalW) * alignX;
+    const keel::f32 baselineY = boundsPx.y + (boundsPx.h - capH) * alignY + capBearingY;
+    const keel::f32 topY = baselineY - ascPx;
 
     return DrawText(
         dstBuffer, dstW, dstH, dstStride,
