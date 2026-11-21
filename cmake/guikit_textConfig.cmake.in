@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(guikit)
+
+if (@GUIKIT_TEXT_FREETYPE_ENABLED@ AND NOT @GUIKIT_TEXT_BUNDLED_FREETYPE@)
+    find_dependency(Freetype)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/guikitTextTargets.cmake")
+check_required_components(guikit_text)
