@@ -10,7 +10,13 @@ namespace guikit {
 
 namespace {
 
-keel::u8 s_keelFontBackendMarker = 1u;
+struct KeelFontBackendState {
+    keel::font::RasterScratch scratch;
+};
+
+[[nodiscard]] inline KeelFontBackendState* AsBackendState(void* ptr) noexcept {
+    return static_cast<KeelFontBackendState*>(ptr);
+}
 
 [[nodiscard]] inline keel::font::FontFace* AsFontFace(void* ptr) noexcept {
     return static_cast<keel::font::FontFace*>(ptr);
@@ -61,7 +67,7 @@ keel::StringRef TextEngine::BackendName() noexcept {
 }
 
 TextEngine::TextEngine() noexcept {
-    m_backend = &s_keelFontBackendMarker;
+    m_backend = new KeelFontBackendState();
 }
 
 TextEngine::~TextEngine() noexcept {
@@ -75,7 +81,10 @@ TextEngine::~TextEngine() noexcept {
         slot.staticData = nullptr;
         slot.staticSize = 0u;
     }
-    m_backend = nullptr;
+    if (m_backend != nullptr) {
+        delete AsBackendState(m_backend);
+        m_backend = nullptr;
+    }
 }
 
 bool TextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, bool copyData) {
@@ -353,7 +362,8 @@ const TextEngine::GlyphEntry& TextEngine::ResolveGlyph(
             .syntheticItalic = rf.synthItalic
         };
         keel::font::GlyphBitmap bm{};
-        if (face->rasterize(glyphIndex, fontSizePx, rOpts, bm)) {
+        keel::font::RasterScratch* sc = m_backend ? &AsBackendState(m_backend)->scratch : nullptr;
+        if (face->rasterize(glyphIndex, fontSizePx, rOpts, bm, sc)) {
             entry.bitmap = keel::move(bm.pixels);
             entry.width = bm.width;
             entry.height = bm.height;
@@ -421,11 +431,9 @@ Vec2 TextEngine::MeasureText(
     }
 
     const keel::font::FontFace* face = AsFontFaceConst(rf.slot->face);
+    const keel::f32 qSizePx = keel::as<keel::f32>(sizeQ4) * 0.25f;
+    const keel::font::Hinting kHint = ToKeelHinting(hinting);
     const bool hasKerning = face->has_kerning();
-    const bool subPhase = UsesSubpixelPhase(hinting);
-    const keel::f32 scale = (face->units_per_em() > 0u)
-        ? (scaledFontSizePx / keel::as<keel::f32>(face->units_per_em()))
-        : 0.0f;
 
     keel::f32 totalAdvance = 0.0f;
     keel::u32 prevGlyph = 0u;
@@ -435,21 +443,16 @@ Vec2 TextEngine::MeasureText(
         if (cp == '\n' || cp == '\r') continue;
         if (cp == '\t') {
             const keel::u32 spIdx = face->glyph_index(keel::as<keel::u32>(' '));
-            const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, hinting, false, 0u);
-            totalAdvance += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
+            const keel::f32 spAdv = face->advance_width_px(spIdx, qSizePx, kHint, rf.synthBold);
+            totalAdvance += (spAdv > 0.0f) ? (spAdv * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
             continue;
         }
         const keel::u32 glyphIdx = face->glyph_index(cp);
         if (hasKerning && prevGlyph != 0u && glyphIdx != 0u) {
-            const keel::i32 kernUnits = face->kerning_units(prevGlyph, glyphIdx);
-            if (kernUnits != 0) {
-                const keel::f32 kPx = keel::as<keel::f32>(kernUnits) * scale;
-                totalAdvance += subPhase ? kPx : keel::round(kPx);
-            }
+            totalAdvance += face->kerning_px(prevGlyph, glyphIdx, scaledFontSizePx, kHint);
         }
-        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, hinting, false, 0u);
-        totalAdvance += g.advancePx;
+        totalAdvance += face->advance_width_px(glyphIdx, qSizePx, kHint, rf.synthBold);
         prevGlyph = glyphIdx;
     }
 
@@ -626,6 +629,9 @@ void TextEngine::TrimCaches() noexcept {
     m_head = kNil;
     m_tail = kNil;
     m_freeHead = kNil;
+    if (m_backend != nullptr) {
+        AsBackendState(m_backend)->scratch.release();
+    }
 }
 
 void TextEngine::EvictTail() noexcept {
