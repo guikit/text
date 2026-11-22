@@ -6,7 +6,7 @@ if (PROJECT_IS_TOP_LEVEL)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 endif()
 
-option(GUIKIT_TEXT_USE_FREETYPE "Build FreeType hinted glyph rasterizer backend" ON)
+option(GUIKIT_TEXT_USE_FREETYPE "Use optional FreeType glyph rasterizer backend (OFF = keel::font zero-dependency C++20 rasterizer)" OFF)
 option(GUIKIT_TEXT_BUILD_TESTS "Build GuiKit Text unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(GUIKIT_TEXT_INSTALL "Enable CMake install targets for guikit_text" ${PROJECT_IS_TOP_LEVEL})
 
@@ -45,7 +45,7 @@ function(_guikit_text_add_bundled_freetype)
         file(WRITE "${_FT_OPT_OUT}" "${_FT_OPT_CONTENT}")
     endif()
 
-    # Minimal modern FreeType build: TTF/TTC + OTF (CFF) + autofit + smooth/Harmony LCD + embolden (14 files vs 42)
+    # Minimal modern FreeType build: TTF/TTC + OTF (CFF) + Variable Fonts + autofit + smooth/Harmony LCD + embolden
     add_library(guikit_freetype STATIC
         "${_FT_ROOT}/src/base/ftbase.c"
         "${_FT_ROOT}/src/base/ftbitmap.c"
@@ -81,6 +81,7 @@ function(_guikit_text_add_bundled_freetype)
 endfunction()
 
 set(GUIKIT_TEXT_BUNDLED_FREETYPE OFF)
+set(GUIKIT_TEXT_BUNDLED_KEEL_FONT OFF)
 set(GUIKIT_TEXT_FREETYPE_ENABLED OFF)
 if (GUIKIT_TEXT_USE_FREETYPE)
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/freetype/src/base/ftbase.c")
@@ -92,12 +93,13 @@ if (GUIKIT_TEXT_USE_FREETYPE)
         if (Freetype_FOUND)
             set(GUIKIT_TEXT_FREETYPE_ENABLED ON)
         else()
-            message(STATUS "GuiKit Text: FreeType not found; guikit::text FreeType backend disabled")
+            message(STATUS "GuiKit Text: FreeType not found; falling back to keel::font C++20 rasterizer")
         endif()
     endif()
 endif()
 
 if (GUIKIT_TEXT_FREETYPE_ENABLED)
+    message(STATUS "GuiKit Text: using optional FreeType backend")
     add_library(guikit_text STATIC
         src/guikit/backend/freetype_text_engine.cpp
     )
@@ -110,25 +112,46 @@ if (GUIKIT_TEXT_FREETYPE_ENABLED)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     )
-    target_compile_definitions(guikit_text PUBLIC GUIKIT_HAS_FREETYPE=1)
+    target_compile_definitions(guikit_text PUBLIC
+        GUIKIT_HAS_TEXT_ENGINE=1
+        GUIKIT_HAS_FREETYPE=1
+    )
     if (GUIKIT_TEXT_BUNDLED_FREETYPE)
         target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE guikit_freetype)
     else()
         target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE Freetype::Freetype)
     endif()
 else()
-    add_library(guikit_text INTERFACE)
+    message(STATUS "GuiKit Text: using keel::font zero-dependency C++20 rasterizer")
+    if (NOT TARGET keel::font)
+        if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/font/CMakeLists.txt")
+            set(GUIKIT_TEXT_BUNDLED_KEEL_FONT ON)
+            set(KEEL_FONT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            add_subdirectory(third_party/font EXCLUDE_FROM_ALL)
+        else()
+            find_package(keel_font REQUIRED CONFIG)
+        endif()
+    endif()
+
+    add_library(guikit_text STATIC
+        src/guikit/backend/builtin_text_engine.cpp
+    )
     add_library(guikit::text ALIAS guikit_text)
     set_target_properties(guikit_text PROPERTIES EXPORT_NAME text)
-    target_include_directories(guikit_text INTERFACE
+
+    target_compile_features(guikit_text PUBLIC cxx_std_20)
+    target_include_directories(guikit_text PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     )
-    target_compile_definitions(guikit_text INTERFACE GUIKIT_HAS_FREETYPE=0)
-    target_link_libraries(guikit_text INTERFACE guikit::core)
+    target_compile_definitions(guikit_text PUBLIC
+        GUIKIT_HAS_TEXT_ENGINE=1
+        GUIKIT_HAS_FREETYPE=0
+    )
+    target_link_libraries(guikit_text PUBLIC guikit::core PRIVATE keel::font)
 endif()
 
-if (COMMAND guikit_enforce_guidelines AND GUIKIT_TEXT_FREETYPE_ENABLED)
+if (COMMAND guikit_enforce_guidelines)
     guikit_enforce_guidelines(guikit_text
         HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include"
         STANDALONE_HEADERS ${GUIKIT_TEXT_BUILD_TESTS}
@@ -143,6 +166,9 @@ if (GUIKIT_TEXT_INSTALL)
     set(_GUIKIT_TEXT_EXPORT_TARGETS guikit_text)
     if (GUIKIT_TEXT_BUNDLED_FREETYPE AND TARGET guikit_freetype)
         list(APPEND _GUIKIT_TEXT_EXPORT_TARGETS guikit_freetype)
+    endif()
+    if (GUIKIT_TEXT_BUNDLED_KEEL_FONT AND TARGET keel_font)
+        list(APPEND _GUIKIT_TEXT_EXPORT_TARGETS keel_font)
     endif()
 
     install(TARGETS ${_GUIKIT_TEXT_EXPORT_TARGETS}

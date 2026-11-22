@@ -1,4 +1,4 @@
-#include "guikit/backend/freetype_text_engine.hpp"
+#include "guikit/backend/text_engine.hpp"
 #include <cstring>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -12,6 +12,14 @@
 namespace guikit {
 
 namespace {
+
+[[nodiscard]] inline FT_Library AsLibrary(void* ptr) noexcept {
+    return static_cast<FT_Library>(ptr);
+}
+
+[[nodiscard]] inline FT_Face AsFace(void* ptr) noexcept {
+    return static_cast<FT_Face>(ptr);
+}
 
 [[nodiscard]] constexpr keel::usize StyleToSlot(FontStyle style) noexcept {
     const auto idx = keel::as<keel::usize>(style);
@@ -43,35 +51,41 @@ namespace {
 
 } // namespace
 
-FreeTypeTextEngine::FreeTypeTextEngine() noexcept {
-    if (FT_Init_FreeType(&m_library) != 0) {
-        m_library = nullptr;
-        return;
-    }
-    // Configure 5-tap balanced LCD filter when ClearType subpixel rendering is enabled;
-    // on modern Harmony LCD builds this returns FT_Err_Unimplemented_Feature and is safely ignored.
-    (void)FT_Library_SetLcdFilter(m_library, FT_LCD_FILTER_DEFAULT);
+keel::StringRef TextEngine::BackendName() noexcept {
+    return "freetype";
 }
 
-FreeTypeTextEngine::~FreeTypeTextEngine() noexcept {
+TextEngine::TextEngine() noexcept {
+    FT_Library lib = nullptr;
+    if (FT_Init_FreeType(&lib) != 0) {
+        m_backend = nullptr;
+        return;
+    }
+    m_backend = lib;
+    // Configure 5-tap balanced LCD filter when ClearType subpixel rendering is enabled;
+    // on modern Harmony LCD builds this returns FT_Err_Unimplemented_Feature and is safely ignored.
+    (void)FT_Library_SetLcdFilter(lib, FT_LCD_FILTER_DEFAULT);
+}
+
+TextEngine::~TextEngine() noexcept {
     TrimCaches();
     for (auto& slot : m_faces) {
         if (slot.face != nullptr) {
-            FT_Done_Face(slot.face);
+            FT_Done_Face(AsFace(slot.face));
             slot.face = nullptr;
         }
         slot.ownedData = keel::Array<keel::u8>{};
         slot.staticData = nullptr;
         slot.staticSize = 0;
     }
-    if (m_library != nullptr) {
-        FT_Done_FreeType(m_library);
-        m_library = nullptr;
+    if (m_backend != nullptr) {
+        FT_Done_FreeType(AsLibrary(m_backend));
+        m_backend = nullptr;
     }
 }
 
-bool FreeTypeTextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, bool copyData) {
-    if (!m_library || data.empty()) {
+bool TextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, bool copyData) {
+    if (!m_backend || data.empty()) {
         return false;
     }
 
@@ -89,7 +103,7 @@ bool FreeTypeTextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle
 
     FT_Face newFace = nullptr;
     const FT_Error err = FT_New_Memory_Face(
-        m_library,
+        AsLibrary(m_backend),
         reinterpret_cast<const FT_Byte*>(bufPtr),
         keel::as<FT_Long>(bufSize),
         0,
@@ -102,7 +116,7 @@ bool FreeTypeTextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle
     (void)FT_Select_Charmap(newFace, FT_ENCODING_UNICODE);
 
     if (slot.face != nullptr) {
-        FT_Done_Face(slot.face);
+        FT_Done_Face(AsFace(slot.face));
         slot.face = nullptr;
     }
     slot.face = newFace;
@@ -115,8 +129,8 @@ bool FreeTypeTextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle
     return true;
 }
 
-bool FreeTypeTextEngine::LoadDefaultEmbeddedFonts() {
-    if (!m_library) {
+bool TextEngine::LoadDefaultEmbeddedFonts() {
+    if (!m_backend) {
         return false;
     }
     struct DefaultFontSlot {
@@ -142,7 +156,7 @@ bool FreeTypeTextEngine::LoadDefaultEmbeddedFonts() {
     return loadedRegular || HasFontForStyle(FontStyle::Regular);
 }
 
-bool FreeTypeTextEngine::GetFontMetrics(
+bool TextEngine::GetFontMetrics(
     keel::f32 scaledFontSizePx,
     FontStyle style,
     FontHinting hinting,
@@ -160,7 +174,7 @@ bool FreeTypeTextEngine::GetFontMetrics(
     if (!EnsureFaceSize(*rf.slot, sizeQ4)) {
         return false;
     }
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     if (face->units_per_EM > 0u && face->ascender > face->descender) {
         const keel::f32 scale = scaledFontSizePx / keel::as<keel::f32>(face->units_per_EM);
         outMetrics.ascentPx = keel::as<keel::f32>(face->ascender) * scale;
@@ -181,7 +195,7 @@ bool FreeTypeTextEngine::GetFontMetrics(
     return true;
 }
 
-keel::f32 FreeTypeTextEngine::GetKerningPx(
+keel::f32 TextEngine::GetKerningPx(
     keel::u32 prevCodepoint,
     keel::u32 codepoint,
     keel::f32 scaledFontSizePx,
@@ -199,7 +213,7 @@ keel::f32 FreeTypeTextEngine::GetKerningPx(
     if (!EnsureFaceSize(*rf.slot, sizeQ4)) {
         return 0.0f;
     }
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     if (FT_HAS_KERNING(face) == 0) {
         return 0.0f;
     }
@@ -216,7 +230,7 @@ keel::f32 FreeTypeTextEngine::GetKerningPx(
     return keel::as<keel::f32>(kern.x) / 64.0f;
 }
 
-bool FreeTypeTextEngine::RasterizeCodepoint(
+bool TextEngine::RasterizeCodepoint(
     keel::u32 codepoint,
     keel::f32 scaledFontSizePx,
     FontStyle style,
@@ -237,7 +251,7 @@ bool FreeTypeTextEngine::RasterizeCodepoint(
     if (!EnsureFaceSize(*rf.slot, sizeQ4)) {
         return false;
     }
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     const keel::u32 glyphIdx = FT_Get_Char_Index(face, codepoint);
     const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, hinting, subpixel, phase);
     outGlyph.bitmap = g.bitmap.empty() ? nullptr : g.bitmap.data();
@@ -252,8 +266,8 @@ bool FreeTypeTextEngine::RasterizeCodepoint(
     return true;
 }
 
-bool FreeTypeTextEngine::HasFontForStyle(FontStyle style) const noexcept {
-    if (!m_library) return false;
+bool TextEngine::HasFontForStyle(FontStyle style) const noexcept {
+    if (!m_backend) return false;
     const keel::usize idx = StyleToSlot(style);
     if (m_faces[idx].face != nullptr) return true;
     if (style == FontStyle::BoldItalic) {
@@ -265,7 +279,7 @@ bool FreeTypeTextEngine::HasFontForStyle(FontStyle style) const noexcept {
     return m_faces[0].face != nullptr;
 }
 
-FreeTypeTextEngine::ResolvedFace FreeTypeTextEngine::ResolveFace(FontStyle style) noexcept {
+TextEngine::ResolvedFace TextEngine::ResolveFace(FontStyle style) noexcept {
     const keel::usize idx = StyleToSlot(style);
     if (m_faces[idx].face != nullptr) {
         return ResolvedFace{
@@ -309,19 +323,19 @@ FreeTypeTextEngine::ResolvedFace FreeTypeTextEngine::ResolveFace(FontStyle style
     return ResolvedFace{};
 }
 
-bool FreeTypeTextEngine::EnsureFaceSize(FaceSlot& slot, keel::u16 sizeQ4) noexcept {
+bool TextEngine::EnsureFaceSize(FaceSlot& slot, keel::u16 sizeQ4) noexcept {
     if (!slot.face) return false;
     if (slot.currentSizeQ4 == sizeQ4) return true;
     // sizeQ4 is in quarter-pixels; FT_F26Dot6 is 1/64 px -> multiply by 16
     const FT_F26Dot6 charHeight = keel::as<FT_F26Dot6>(sizeQ4) * 16;
-    if (FT_Set_Char_Size(slot.face, 0, charHeight, 72, 72) != 0) {
+    if (FT_Set_Char_Size(AsFace(slot.face), 0, charHeight, 72, 72) != 0) {
         return false;
     }
     slot.currentSizeQ4 = sizeQ4;
     return true;
 }
 
-const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
+const TextEngine::GlyphEntry& TextEngine::ResolveGlyph(
     const ResolvedFace& rf,
     keel::u32 glyphIndex,
     keel::u16 sizeQ4,
@@ -348,7 +362,7 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
     entry.empty = true;
 
     if (rf.slot && EnsureFaceSize(*rf.slot, sizeQ4)) {
-        FT_Face face = rf.slot->face;
+        FT_Face face = AsFace(rf.slot->face);
 
         FT_Matrix mat{0x10000L, 0L, 0L, 0x10000L};
         if (rf.synthItalic) {
@@ -452,7 +466,7 @@ const FreeTypeTextEngine::GlyphEntry& FreeTypeTextEngine::ResolveGlyph(
     return m_glyphNodes[slotIdx].entry;
 }
 
-Vec2 FreeTypeTextEngine::MeasureText(
+Vec2 TextEngine::MeasureText(
     keel::StringRef text,
     keel::f32 scaledFontSizePx,
     FontStyle style,
@@ -472,7 +486,7 @@ Vec2 FreeTypeTextEngine::MeasureText(
         return {0.0f, 0.0f};
     }
 
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     const bool hasKerning = FT_HAS_KERNING(face) != 0;
     const bool subPhase = UsesSubpixelPhase(hinting);
     const FT_UInt kernMode = subPhase ? FT_KERNING_UNFITTED : FT_KERNING_DEFAULT;
@@ -508,7 +522,7 @@ Vec2 FreeTypeTextEngine::MeasureText(
     return {totalAdvance, glyphBoxH};
 }
 
-bool FreeTypeTextEngine::DrawText(
+bool TextEngine::DrawText(
     keel::u32* dstBuffer,
     keel::u32 dstW,
     keel::u32 dstH,
@@ -537,7 +551,7 @@ bool FreeTypeTextEngine::DrawText(
         return false;
     }
 
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     const keel::f32 ascPx = (face->units_per_EM > 0u && face->ascender > 0)
         ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender) / keel::as<keel::f32>(face->units_per_EM))
         : (keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f);
@@ -610,7 +624,7 @@ bool FreeTypeTextEngine::DrawText(
     return true;
 }
 
-bool FreeTypeTextEngine::DrawTextBox(
+bool TextEngine::DrawTextBox(
     keel::u32* dstBuffer,
     keel::u32 dstW,
     keel::u32 dstH,
@@ -640,7 +654,7 @@ bool FreeTypeTextEngine::DrawTextBox(
         return false;
     }
 
-    FT_Face face = rf.slot->face;
+    FT_Face face = AsFace(rf.slot->face);
     const keel::f32 ascPx = (face->units_per_EM > 0u && face->ascender > 0)
         ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender) / keel::as<keel::f32>(face->units_per_EM))
         : (keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f);
@@ -667,7 +681,7 @@ bool FreeTypeTextEngine::DrawTextBox(
     );
 }
 
-void FreeTypeTextEngine::TrimCaches() noexcept {
+void TextEngine::TrimCaches() noexcept {
     m_glyphMap = {};
     m_glyphNodes = {};
     m_totalGlyphBytes = 0u;
@@ -676,7 +690,7 @@ void FreeTypeTextEngine::TrimCaches() noexcept {
     m_freeHead = kNil;
 }
 
-void FreeTypeTextEngine::EvictTail() noexcept {
+void TextEngine::EvictTail() noexcept {
     if (m_tail == kNil) {
         return;
     }
@@ -691,7 +705,7 @@ void FreeTypeTextEngine::EvictTail() noexcept {
     m_freeHead = slot;
 }
 
-void FreeTypeTextEngine::Detach(keel::u32 idx) noexcept {
+void TextEngine::Detach(keel::u32 idx) noexcept {
     GlyphNode& n = m_glyphNodes[idx];
     if (n.prev != kNil) {
         m_glyphNodes[n.prev].next = n.next;
@@ -707,7 +721,7 @@ void FreeTypeTextEngine::Detach(keel::u32 idx) noexcept {
     n.next = kNil;
 }
 
-void FreeTypeTextEngine::AttachFront(keel::u32 idx) noexcept {
+void TextEngine::AttachFront(keel::u32 idx) noexcept {
     GlyphNode& n = m_glyphNodes[idx];
     n.prev = kNil;
     n.next = m_head;
@@ -719,7 +733,7 @@ void FreeTypeTextEngine::AttachFront(keel::u32 idx) noexcept {
     m_head = idx;
 }
 
-void FreeTypeTextEngine::MoveToFront(keel::u32 idx) noexcept {
+void TextEngine::MoveToFront(keel::u32 idx) noexcept {
     if (idx == m_head) {
         return;
     }

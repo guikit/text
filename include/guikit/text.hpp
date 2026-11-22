@@ -5,4 +5,5 @@
 // ==============================================================================
 
 #include "guikit/core.hpp"
+#include "guikit/backend/text_engine.hpp"
 #include "guikit/backend/freetype_text_engine.hpp"
