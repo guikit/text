@@ -46,7 +46,7 @@ namespace {
 }
 
 [[nodiscard]] constexpr bool UsesSubpixelPhase(FontHinting hinting) noexcept {
-    return hinting != FontHinting::Normal;
+    return TextCompositor::ResolveEffectiveHinting(hinting, 1.0f) != FontHinting::Normal;
 }
 
 } // namespace
@@ -558,9 +558,10 @@ bool TextEngine::DrawText(
     const keel::i32 baselineY = keel::round_i32(posY + ascPx);
 
     const FontSmoothing effSmooth = TextCompositor::ResolveEffectiveSmoothing(settings.smoothing, canvasScale);
+    const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(settings.hinting, canvasScale);
     const bool useSubpixel = (effSmooth == FontSmoothing::SubpixelRGB || effSmooth == FontSmoothing::SubpixelBGR);
     const bool bgrOrder = (effSmooth == FontSmoothing::SubpixelBGR);
-    const bool subPhase = UsesSubpixelPhase(settings.hinting);
+    const bool subPhase = UsesSubpixelPhase(effHint);
     const bool hasKerning = FT_HAS_KERNING(face) != 0;
     const FT_UInt kernMode = subPhase ? FT_KERNING_UNFITTED : FT_KERNING_DEFAULT;
 
@@ -573,7 +574,7 @@ bool TextEngine::DrawText(
         if (cp == '\n' || cp == '\r') continue;
         if (cp == '\t') {
             const keel::u32 spIdx = FT_Get_Char_Index(face, keel::as<keel::u32>(' '));
-            const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, settings.hinting, false, 0u);
+            const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, effHint, false, 0u);
             penX += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
             continue;
@@ -598,7 +599,7 @@ bool TextEngine::DrawText(
             cellX = keel::round_i32(penX);
         }
 
-        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, settings.hinting, useSubpixel, phase);
+        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, effHint, useSubpixel, phase);
         if (!g.empty && !g.bitmap.empty()) {
             const keel::i32 gx = cellX + g.bearingX;
             const keel::i32 gy = baselineY - g.bearingY;
@@ -660,8 +661,9 @@ bool TextEngine::DrawTextBox(
         : (keel::as<keel::f32>(face->size->metrics.ascender) / 64.0f);
 
     // Measure cap-height ('H') for optically centered vertical placement inside buttons/inputs/tabs
+    const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(settings.hinting, canvasScale);
     const keel::u32 capIdx = FT_Get_Char_Index(face, keel::as<keel::u32>('H'));
-    const GlyphEntry& capGlyph = ResolveGlyph(rf, capIdx, sizeQ4, settings.hinting, false, 0u);
+    const GlyphEntry& capGlyph = ResolveGlyph(rf, capIdx, sizeQ4, effHint, false, 0u);
     const keel::f32 capH = (!capGlyph.empty && capGlyph.height > 0u)
         ? keel::as<keel::f32>(capGlyph.height)
         : (scaledFontSizePx * 0.72f);
@@ -669,7 +671,7 @@ bool TextEngine::DrawTextBox(
         ? keel::as<keel::f32>(capGlyph.bearingY)
         : capH;
 
-    const keel::f32 totalW = MeasureText(text, scaledFontSizePx, style, settings.hinting).x;
+    const keel::f32 totalW = MeasureText(text, scaledFontSizePx, style, effHint).x;
     const keel::f32 startX = boundsPx.x + (boundsPx.w - totalW) * alignX;
     const keel::f32 baselineY = boundsPx.y + (boundsPx.h - capH) * alignY + capBearingY;
     const keel::f32 topY = baselineY - ascPx;

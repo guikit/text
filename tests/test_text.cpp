@@ -127,7 +127,80 @@ int main() {
     CHECK(rgbChromatic > 20u);
     CHECK(rgbVsBgrDiff > 20u);
 
-    // 7. Cache trimming
+    // 7. Vertical stem autohinting (Normal) + LCD phase balance regression check
+    {
+        TextEngine::RasterizedGlyph hNormGray{};
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('H'), 14.0f, FontStyle::Regular, FontHinting::Normal, false, 0u, hNormGray));
+        CHECK(!hNormGray.empty && hNormGray.bitmap != nullptr && hNormGray.height > 6u);
+        // Middle row above crossbar should have two crisp full-coverage vertical stems (>= 240)
+        const keel::u32 probeRow = hNormGray.height / 4u;
+        keel::u32 crispCols = 0u;
+        for (keel::u32 x = 0u; x < hNormGray.width; ++x) {
+            if (hNormGray.bitmap[probeRow * hNormGray.strideBytes + x] >= 240u) {
+                ++crispCols;
+            }
+        }
+        CHECK(crispCols >= 2u);
+
+        // Normal + LCD on vertical stem 'H' should have crisp, left/right symmetric R/B subpixels (zero stem hue shift)
+        TextEngine::RasterizedGlyph hNormLcd{};
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('H'), 14.0f, FontStyle::Regular, FontHinting::Normal, true, 0u, hNormLcd));
+        CHECK(!hNormLcd.empty && hNormLcd.bitmap != nullptr && hNormLcd.isSubpixel);
+        const keel::u32 lcdProbeRow = hNormLcd.height / 4u;
+        keel::u32 balancedStemPx = 0u;
+        for (keel::u32 x = 0u; x < hNormLcd.width; ++x) {
+            const keel::u8* px = hNormLcd.bitmap + lcdProbeRow * hNormLcd.strideBytes + x * 3u;
+            const keel::i32 r = keel::as<keel::i32>(px[0]);
+            const keel::i32 g = keel::as<keel::i32>(px[1]);
+            const keel::i32 b = keel::as<keel::i32>(px[2]);
+            if (g >= 220 && r >= 160 && b >= 160 && keel::abs(r - b) <= 8) {
+                ++balancedStemPx;
+            }
+        }
+        CHECK(balancedStemPx >= 2u);
+
+        // FontHinting::Auto resolves cleanly at both 1x and 2x DPI
+        keel::Array<keel::u32> fbAuto1x(W * H, 0xFFF8FAFCu);
+        keel::Array<keel::u32> fbAuto2x(W * H, 0xFFF8FAFCu);
+        const TextRenderSettings sAuto{};
+        CHECK(sAuto.hinting == FontHinting::Auto);
+        CHECK(engine.DrawText(fbAuto1x.data(), W, H, W, "Hello Привет", 8.0f, 10.0f, 14.0f, Color(15, 23, 42, 255), FontStyle::Regular, clip, sAuto, 1.0f));
+        CHECK(engine.DrawText(fbAuto2x.data(), W, H, W, "Hello Привет", 8.0f, 10.0f, 28.0f, Color(15, 23, 42, 255), FontStyle::Regular, clip, sAuto, 2.0f));
+        keel::usize inkedLight1x = 0u;
+        for (keel::usize i = 0; i < W * H; ++i) {
+            if ((fbAuto1x[i] & 0xFFu) < 0xB0u) ++inkedLight1x;
+        }
+        CHECK(inkedLight1x > 50u);
+
+        // Regression: Light hinting must NOT shave rounded glyph tops ('e','S') or crush 'T' top bar at 125% (16.25px)
+        TextEngine::RasterizedGlyph eLight{}, eNone{};
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('e'), 16.25f, FontStyle::Monospace, FontHinting::Light, false, 0u, eLight));
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('e'), 16.25f, FontStyle::Monospace, FontHinting::None, false, 0u, eNone));
+        CHECK(eLight.height + 1u >= eNone.height); // Rounded arch preserved (no 2px overshoot chop)
+
+        TextEngine::RasterizedGlyph tLight{};
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('T'), 16.25f, FontStyle::Monospace, FontHinting::Light, false, 0u, tLight));
+        CHECK(!tLight.empty && tLight.height >= 12u && tLight.width >= 8u);
+        // Row 1 (just beneath the top bar edge) must keep natural lower AA coverage (> 40 on crossbar columns)
+        keel::u32 barRow1Hits = 0u;
+        for (keel::u32 x = 1u; x + 1u < tLight.width; ++x) {
+            if (tLight.bitmap[1u * tLight.strideBytes + x] >= 40u) {
+                ++barRow1Hits;
+            }
+        }
+        CHECK(barRow1Hits >= 5u);
+
+        // Regression: small-size synthetic Bold ('E' at 12px) must NOT smear upward halo above cap-height
+        // and must keep open counter rows between horizontal bars.
+        TextEngine::RasterizedGlyph eReg12{}, eBold12{};
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('E'), 12.0f, FontStyle::Regular, FontHinting::Light, false, 0u, eReg12));
+        CHECK(engine.RasterizeCodepoint(keel::as<keel::u32>('E'), 12.0f, FontStyle::Bold, FontHinting::Light, false, 0u, eBold12));
+        CHECK(eBold12.height == eReg12.height);
+        CHECK(eBold12.bearingY == eReg12.bearingY);
+        CHECK(eBold12.advancePx > eReg12.advancePx + 0.35f);
+    }
+
+    // 8. Cache trimming
     CHECK(engine.GetCachedGlyphCount() > 0u);
     engine.TrimCaches();
     CHECK(engine.GetCachedGlyphCount() == 0u);

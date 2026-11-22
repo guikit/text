@@ -27,8 +27,9 @@ struct KeelFontBackendState {
 }
 
 [[nodiscard]] constexpr keel::font::Hinting ToKeelHinting(FontHinting h) noexcept {
-    if (h == FontHinting::None) return keel::font::Hinting::None;
-    if (h == FontHinting::Normal) return keel::font::Hinting::Normal;
+    const FontHinting resolved = TextCompositor::ResolveEffectiveHinting(h, 1.0f);
+    if (resolved == FontHinting::None) return keel::font::Hinting::None;
+    if (resolved == FontHinting::Normal) return keel::font::Hinting::Normal;
     return keel::font::Hinting::Light;
 }
 
@@ -57,7 +58,7 @@ struct KeelFontBackendState {
 }
 
 [[nodiscard]] constexpr bool UsesSubpixelPhase(FontHinting hinting) noexcept {
-    return hinting != FontHinting::Normal;
+    return TextCompositor::ResolveEffectiveHinting(hinting, 1.0f) != FontHinting::Normal;
 }
 
 } // namespace
@@ -501,9 +502,10 @@ bool TextEngine::DrawText(
     const keel::i32 baselineY = keel::round_i32(posY + ascPx);
 
     const FontSmoothing effSmooth = TextCompositor::ResolveEffectiveSmoothing(settings.smoothing, canvasScale);
+    const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(settings.hinting, canvasScale);
     const bool useSubpixel = (effSmooth == FontSmoothing::SubpixelRGB || effSmooth == FontSmoothing::SubpixelBGR);
     const bool bgrOrder = (effSmooth == FontSmoothing::SubpixelBGR);
-    const bool subPhase = UsesSubpixelPhase(settings.hinting);
+    const bool subPhase = UsesSubpixelPhase(effHint);
     const bool hasKerning = face->has_kerning();
 
     keel::f32 penX = posX;
@@ -515,7 +517,7 @@ bool TextEngine::DrawText(
         if (cp == '\n' || cp == '\r') continue;
         if (cp == '\t') {
             const keel::u32 spIdx = face->glyph_index(keel::as<keel::u32>(' '));
-            const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, settings.hinting, false, 0u);
+            const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, effHint, false, 0u);
             penX += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
             continue;
@@ -533,14 +535,23 @@ bool TextEngine::DrawText(
         keel::i32 cellX = 0;
         keel::u8 phase = 0u;
         if (subPhase) {
-            const keel::i32 qx = keel::round_i32(penX * 4.0f);
-            cellX = qx >> 2;
-            phase = keel::as<keel::u8>(qx & 3);
+            if (useSubpixel) {
+                // Exact 1/3-pixel quantization aligned to physical R/G/B LCD subpixels
+                const keel::i32 qx = keel::round_i32(penX * 3.0f);
+                keel::i32 rem = qx % 3;
+                if (rem < 0) rem += 3;
+                cellX = (qx - rem) / 3;
+                phase = keel::as<keel::u8>(rem);
+            } else {
+                const keel::i32 qx = keel::round_i32(penX * 4.0f);
+                cellX = qx >> 2;
+                phase = keel::as<keel::u8>(qx & 3);
+            }
         } else {
             cellX = keel::round_i32(penX);
         }
 
-        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, settings.hinting, useSubpixel, phase);
+        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, effHint, useSubpixel, phase);
         if (!g.empty && !g.bitmap.empty()) {
             const keel::i32 gx = cellX + g.bearingX;
             const keel::i32 gy = baselineY - g.bearingY;
@@ -601,8 +612,9 @@ bool TextEngine::DrawTextBox(
         ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender()) / keel::as<keel::f32>(face->units_per_em()))
         : (scaledFontSizePx * 0.85f);
 
+    const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(settings.hinting, canvasScale);
     const keel::u32 capIdx = face->glyph_index(keel::as<keel::u32>('H'));
-    const GlyphEntry& capGlyph = ResolveGlyph(rf, capIdx, sizeQ4, settings.hinting, false, 0u);
+    const GlyphEntry& capGlyph = ResolveGlyph(rf, capIdx, sizeQ4, effHint, false, 0u);
     const keel::f32 capH = (!capGlyph.empty && capGlyph.height > 0u)
         ? keel::as<keel::f32>(capGlyph.height)
         : (scaledFontSizePx * 0.72f);
@@ -610,7 +622,7 @@ bool TextEngine::DrawTextBox(
         ? keel::as<keel::f32>(capGlyph.bearingY)
         : capH;
 
-    const keel::f32 totalW = MeasureText(text, scaledFontSizePx, style, settings.hinting).x;
+    const keel::f32 totalW = MeasureText(text, scaledFontSizePx, style, effHint).x;
     const keel::f32 startX = boundsPx.x + (boundsPx.w - totalW) * alignX;
     const keel::f32 baselineY = boundsPx.y + (boundsPx.h - capH) * alignY + capBearingY;
     const keel::f32 topY = baselineY - ascPx;
