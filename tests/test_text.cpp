@@ -1,4 +1,5 @@
 #include "guikit/text.hpp"
+#include "guikit/core/assets.hpp"
 #include "keel/keel.h"
 #include "keel/math.h"
 
@@ -200,7 +201,44 @@ int main() {
         CHECK(eBold12.advancePx > eReg12.advancePx + 0.35f);
     }
 
-    // 8. Cache trimming
+    // 8. Multi-face font fallback chain
+    {
+        TextEngine fbEngine;
+        CHECK(fbEngine.IsAvailable());
+        const auto robotoAsset = Assets::Find("assets/fonts/Roboto-Regular.ttf");
+        const auto monoAsset = Assets::Find("assets/fonts/JetBrainsMono-Regular.ttf");
+        CHECK(robotoAsset.has_value() && !robotoAsset->Empty());
+        CHECK(monoAsset.has_value() && !monoAsset->Empty());
+        CHECK(fbEngine.LoadFontMemory(robotoAsset->Bytes(), FontStyle::Regular, false));
+        CHECK(fbEngine.GetFallbackFontCount() == 0u);
+
+        // Register JetBrainsMono as a fallback face behind Roboto-Regular
+        CHECK(fbEngine.AddFallbackFontMemory(monoAsset->Bytes(), false));
+        CHECK(fbEngine.GetFallbackFontCount() == 1u);
+
+        // Probe a box-drawing glyph (U+2500 '─') present in JetBrainsMono and missing in Roboto-Regular
+        TextEngine::RasterizedGlyph boxGlyph{};
+        CHECK(fbEngine.RasterizeCodepoint(0x2500u, 16.0f, FontStyle::Regular, FontHinting::Light, false, 0u, boxGlyph));
+        CHECK(!boxGlyph.empty && boxGlyph.width >= 6u && boxGlyph.advancePx > 4.0f);
+
+        // Measure & draw a mixed string containing ASCII (primary) + box-drawing (fallback)
+        const Vec2 mixedSz = fbEngine.MeasureText("A─B", 16.0f, FontStyle::Regular, FontHinting::Light);
+        CHECK(mixedSz.x > 18.0f && mixedSz.y > 10.0f);
+
+        keel::Array<keel::u32> fbMix(W * H, 0xFF101010u);
+        CHECK(fbEngine.DrawText(fbMix.data(), W, H, W, "A─B", 4.0f, 8.0f, 16.0f, white, FontStyle::Regular, clip, sGray, 1.0f));
+        keel::usize mixLit = 0u;
+        for (keel::usize i = 0u; i < W * H; ++i) {
+            if ((fbMix[i] & 0xFFu) > 0x10u) ++mixLit;
+        }
+        CHECK(mixLit > 20u);
+
+        // Clearing fallback faces drops fallback count back to zero
+        fbEngine.ClearFallbackFonts();
+        CHECK(fbEngine.GetFallbackFontCount() == 0u);
+    }
+
+    // 9. Cache trimming
     CHECK(engine.GetCachedGlyphCount() > 0u);
     engine.TrimCaches();
     CHECK(engine.GetCachedGlyphCount() == 0u);

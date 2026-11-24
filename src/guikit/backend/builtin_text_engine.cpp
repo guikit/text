@@ -73,6 +73,7 @@ TextEngine::TextEngine() noexcept {
 
 TextEngine::~TextEngine() noexcept {
     TrimCaches();
+    ClearFallbackFonts();
     for (auto& slot : m_faces) {
         if (slot.face != nullptr) {
             delete AsFontFace(slot.face);
@@ -86,6 +87,83 @@ TextEngine::~TextEngine() noexcept {
         delete AsBackendState(m_backend);
         m_backend = nullptr;
     }
+}
+
+bool TextEngine::AddFallbackFontMemory(keel::ArrayRef<keel::u8> data, bool copyData) {
+    if (!m_backend || data.empty() || m_fallbackFaces.size() >= kMaxFallbackFonts) {
+        return false;
+    }
+    keel::Array<keel::u8> newOwned;
+    const keel::u8* bufPtr = data.data();
+    const keel::usize bufSize = data.size();
+    if (copyData) {
+        newOwned.resize(bufSize);
+        keel::mem_copy(newOwned.data(), bufPtr, bufSize);
+        bufPtr = newOwned.data();
+    }
+    auto* newFace = new keel::font::FontFace();
+    if (!newFace->load(bufPtr, bufSize)) {
+        delete newFace;
+        return false;
+    }
+    FaceSlot slot{};
+    slot.face = newFace;
+    slot.ownedData = keel::move(newOwned);
+    slot.staticData = copyData ? nullptr : data.data();
+    slot.staticSize = copyData ? 0u : bufSize;
+    slot.currentSizeQ4 = 0u;
+    m_fallbackFaces.push_back(keel::move(slot));
+    TrimCaches();
+    return true;
+}
+
+void TextEngine::ClearFallbackFonts() noexcept {
+    if (m_fallbackFaces.empty()) {
+        return;
+    }
+    for (auto& slot : m_fallbackFaces) {
+        if (slot.face != nullptr) {
+            delete AsFontFace(slot.face);
+            slot.face = nullptr;
+        }
+        slot.ownedData = keel::Array<keel::u8>{};
+        slot.staticData = nullptr;
+        slot.staticSize = 0u;
+    }
+    m_fallbackFaces.clear();
+    TrimCaches();
+}
+
+bool TextEngine::ResolveCodepointFace(
+    keel::u32 codepoint,
+    const ResolvedFace& primary,
+    ResolvedFace& outFace,
+    keel::u32& outGlyphIndex
+) noexcept {
+    outFace = primary;
+    outGlyphIndex = 0u;
+    if (!primary.slot || !primary.slot->face) {
+        return false;
+    }
+    const keel::u32 primaryIdx = AsFontFaceConst(primary.slot->face)->glyph_index(codepoint);
+    if (primaryIdx != 0u) {
+        outGlyphIndex = primaryIdx;
+        return true;
+    }
+    for (keel::usize i = 0; i < m_fallbackFaces.size(); ++i) {
+        FaceSlot& fb = m_fallbackFaces[i];
+        if (!fb.face) continue;
+        const keel::u32 fbIdx = AsFontFaceConst(fb.face)->glyph_index(codepoint);
+        if (fbIdx != 0u) {
+            outFace.slot = &fb;
+            outFace.slotIndex = keel::as<keel::u8>(kFontStyleCount + i);
+            outFace.synthBold = primary.synthBold;
+            outFace.synthItalic = primary.synthItalic;
+            outGlyphIndex = fbIdx;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool TextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, bool copyData) {
@@ -245,12 +323,13 @@ bool TextEngine::RasterizeCodepoint(
         return false;
     }
     const keel::u16 sizeQ4 = QuantizeSizeQ4(scaledFontSizePx);
-    if (!EnsureFaceSize(*rf.slot, sizeQ4)) {
+    ResolvedFace glyphFace{};
+    keel::u32 glyphIdx = 0u;
+    (void)ResolveCodepointFace(codepoint, rf, glyphFace, glyphIdx);
+    if (!glyphFace.slot || !EnsureFaceSize(*glyphFace.slot, sizeQ4)) {
         return false;
     }
-    const keel::font::FontFace* face = AsFontFaceConst(rf.slot->face);
-    const keel::u32 glyphIdx = face->glyph_index(codepoint);
-    const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, hinting, subpixel, phase);
+    const GlyphEntry& g = ResolveGlyph(glyphFace, glyphIdx, sizeQ4, hinting, subpixel, phase);
     outGlyph.bitmap = g.bitmap.empty() ? nullptr : g.bitmap.data();
     outGlyph.width = g.width;
     outGlyph.height = g.height;
@@ -434,10 +513,10 @@ Vec2 TextEngine::MeasureText(
     const keel::font::FontFace* face = AsFontFaceConst(rf.slot->face);
     const keel::f32 qSizePx = keel::as<keel::f32>(sizeQ4) * 0.25f;
     const keel::font::Hinting kHint = ToKeelHinting(hinting);
-    const bool hasKerning = face->has_kerning();
 
     keel::f32 totalAdvance = 0.0f;
     keel::u32 prevGlyph = 0u;
+    keel::u8 prevSlotIndex = 0xFFu;
     keel::usize offset = 0u;
     while (offset < text.size()) {
         const keel::u32 cp = keel::utf8_decode_next(text, offset);
@@ -447,14 +526,19 @@ Vec2 TextEngine::MeasureText(
             const keel::f32 spAdv = face->advance_width_px(spIdx, qSizePx, kHint, rf.synthBold);
             totalAdvance += (spAdv > 0.0f) ? (spAdv * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
+            prevSlotIndex = 0xFFu;
             continue;
         }
-        const keel::u32 glyphIdx = face->glyph_index(cp);
-        if (hasKerning && prevGlyph != 0u && glyphIdx != 0u) {
-            totalAdvance += face->kerning_px(prevGlyph, glyphIdx, scaledFontSizePx, kHint);
+        ResolvedFace glyphFace{};
+        keel::u32 glyphIdx = 0u;
+        (void)ResolveCodepointFace(cp, rf, glyphFace, glyphIdx);
+        const keel::font::FontFace* activeFace = AsFontFaceConst(glyphFace.slot->face);
+        if (glyphFace.slotIndex == prevSlotIndex && activeFace->has_kerning() && prevGlyph != 0u && glyphIdx != 0u) {
+            totalAdvance += activeFace->kerning_px(prevGlyph, glyphIdx, scaledFontSizePx, kHint);
         }
-        totalAdvance += face->advance_width_px(glyphIdx, qSizePx, kHint, rf.synthBold);
+        totalAdvance += activeFace->advance_width_px(glyphIdx, qSizePx, kHint, glyphFace.synthBold);
         prevGlyph = glyphIdx;
+        prevSlotIndex = glyphFace.slotIndex;
     }
 
     const keel::f32 glyphBoxH = (face->units_per_em() > 0u && face->ascender() > face->descender())
@@ -506,10 +590,10 @@ bool TextEngine::DrawText(
     const bool useSubpixel = (effSmooth == FontSmoothing::SubpixelRGB || effSmooth == FontSmoothing::SubpixelBGR);
     const bool bgrOrder = (effSmooth == FontSmoothing::SubpixelBGR);
     const bool subPhase = UsesSubpixelPhase(effHint);
-    const bool hasKerning = face->has_kerning();
 
     keel::f32 penX = posX;
     keel::u32 prevGlyph = 0u;
+    keel::u8 prevSlotIndex = 0xFFu;
     keel::usize offset = 0u;
 
     while (offset < text.size()) {
@@ -520,14 +604,19 @@ bool TextEngine::DrawText(
             const GlyphEntry& sp = ResolveGlyph(rf, spIdx, sizeQ4, effHint, false, 0u);
             penX += (sp.advancePx > 0.0f) ? (sp.advancePx * 4.0f) : (scaledFontSizePx * 2.4f);
             prevGlyph = 0u;
+            prevSlotIndex = 0xFFu;
             continue;
         }
 
-        const keel::u32 glyphIdx = face->glyph_index(cp);
-        if (hasKerning && prevGlyph != 0u && glyphIdx != 0u) {
-            const keel::i32 kernUnits = face->kerning_units(prevGlyph, glyphIdx);
-            if (kernUnits != 0) {
-                const keel::f32 kPx = keel::as<keel::f32>(kernUnits) * scale;
+        ResolvedFace glyphFace{};
+        keel::u32 glyphIdx = 0u;
+        (void)ResolveCodepointFace(cp, rf, glyphFace, glyphIdx);
+        (void)EnsureFaceSize(*glyphFace.slot, sizeQ4);
+        const keel::font::FontFace* activeFace = AsFontFaceConst(glyphFace.slot->face);
+        if (glyphFace.slotIndex == prevSlotIndex && activeFace->has_kerning() && prevGlyph != 0u && glyphIdx != 0u) {
+            const keel::i32 kernUnits = activeFace->kerning_units(prevGlyph, glyphIdx);
+            if (kernUnits != 0 && activeFace->units_per_em() > 0u) {
+                const keel::f32 kPx = keel::as<keel::f32>(kernUnits) * (scaledFontSizePx / keel::as<keel::f32>(activeFace->units_per_em()));
                 penX += subPhase ? kPx : keel::round(kPx);
             }
         }
@@ -551,7 +640,7 @@ bool TextEngine::DrawText(
             cellX = keel::round_i32(penX);
         }
 
-        const GlyphEntry& g = ResolveGlyph(rf, glyphIdx, sizeQ4, effHint, useSubpixel, phase);
+        const GlyphEntry& g = ResolveGlyph(glyphFace, glyphIdx, sizeQ4, effHint, useSubpixel, phase);
         if (!g.empty && !g.bitmap.empty()) {
             const keel::i32 gx = cellX + g.bearingX;
             const keel::i32 gy = baselineY - g.bearingY;
@@ -572,6 +661,7 @@ bool TextEngine::DrawText(
 
         penX += g.advancePx;
         prevGlyph = glyphIdx;
+        prevSlotIndex = glyphFace.slotIndex;
     }
 
     return true;

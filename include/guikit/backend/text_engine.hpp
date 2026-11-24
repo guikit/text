@@ -56,6 +56,16 @@ public:
     /// If `copyData` is false, `data` must point to static/embedded lifetime storage.
     bool LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, bool copyData);
 
+    /// Appends a fallback font face queried in registration order whenever the primary face lacks a glyph
+    /// (e.g. CJK, Cyrillic, Greek, Emoji, or symbol fonts). Supports up to `kMaxFallbackFonts` faces.
+    bool AddFallbackFontMemory(keel::ArrayRef<keel::u8> data, bool copyData);
+
+    /// Releases all registered fallback font faces and invalidates the glyph cache.
+    void ClearFallbackFonts() noexcept;
+
+    /// Returns the number of registered fallback font faces.
+    [[nodiscard]] keel::usize GetFallbackFontCount() const noexcept { return m_fallbackFaces.size(); }
+
     /// Loads GuiKit's embedded default Roboto & JetBrainsMono font family from `guikit::Assets`.
     /// Returns true if at least the Regular font face was loaded.
     bool LoadDefaultEmbeddedFonts();
@@ -141,6 +151,7 @@ public:
 
 private:
     static constexpr keel::usize kFontStyleCount = 5u;
+    static constexpr keel::usize kMaxFallbackFonts = 16u;
     static constexpr keel::usize kMaxGlyphEntries = 4096u;
     static constexpr keel::usize kMaxGlyphBytes = 4u * 1024u * 1024u;
     static constexpr keel::u32 kNil = 0xFFFFFFFFu;
@@ -205,6 +216,12 @@ private:
     };
 
     [[nodiscard]] ResolvedFace ResolveFace(FontStyle style) noexcept;
+    [[nodiscard]] bool ResolveCodepointFace(
+        keel::u32 codepoint,
+        const ResolvedFace& primary,
+        ResolvedFace& outFace,
+        keel::u32& outGlyphIndex
+    ) noexcept;
     bool EnsureFaceSize(FaceSlot& slot, keel::u16 sizeQ4) noexcept;
     [[nodiscard]] const GlyphEntry& ResolveGlyph(
         const ResolvedFace& rf,
@@ -222,6 +239,7 @@ private:
 
     void* m_backend{nullptr};
     keel::StaticArray<FaceSlot, kFontStyleCount> m_faces{};
+    keel::Array<FaceSlot> m_fallbackFaces;
 
     keel::Array<GlyphNode> m_glyphNodes;
     keel::HashMap<GlyphKey, keel::u32, GlyphKeyHash> m_glyphMap;
