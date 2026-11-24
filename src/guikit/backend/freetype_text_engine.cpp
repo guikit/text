@@ -97,7 +97,7 @@ bool TextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, 
     const keel::usize bufSize = data.size();
     if (copyData) {
         newOwned.resize(bufSize);
-        std::memcpy(newOwned.data(), bufPtr, bufSize);
+        keel::mem_copy(newOwned.data(), bufPtr, bufSize);
         bufPtr = newOwned.data();
     }
 
@@ -419,7 +419,7 @@ const TextEngine::GlyphEntry& TextEngine::ResolveGlyph(
                             const keel::u8* srcRow = (pitch >= 0)
                                 ? (bm.buffer + keel::as<keel::usize>(row) * keel::as<keel::usize>(pitch))
                                 : (bm.buffer + keel::as<keel::usize>(pixelH - 1u - row) * keel::as<keel::usize>(-pitch));
-                            std::memcpy(
+                            keel::mem_copy(
                                 entry.bitmap.data() + keel::as<keel::usize>(row) * keel::as<keel::usize>(rowBytes),
                                 srcRow,
                                 rowBytes

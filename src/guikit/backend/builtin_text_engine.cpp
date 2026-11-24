@@ -101,7 +101,7 @@ bool TextEngine::LoadFontMemory(keel::ArrayRef<keel::u8> data, FontStyle style, 
     const keel::usize bufSize = data.size();
     if (copyData) {
         newOwned.resize(bufSize);
-        std::memcpy(newOwned.data(), bufPtr, bufSize);
+        keel::mem_copy(newOwned.data(), bufPtr, bufSize);
         bufPtr = newOwned.data();
     }
 
