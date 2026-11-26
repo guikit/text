@@ -4,6 +4,7 @@
 #include "keel/array.h"
 #include "keel/core.h"
 #include "keel/hash_map.h"
+#include "keel/memory.h"
 #include "keel/ref.h"
 
 namespace guikit {
@@ -154,7 +155,21 @@ private:
     static constexpr keel::usize kMaxFallbackFonts = 16u;
     static constexpr keel::usize kMaxGlyphEntries = 4096u;
     static constexpr keel::usize kMaxGlyphBytes = 4u * 1024u * 1024u;
+    static constexpr keel::usize kMeasureCacheSlots = 1024u;
+    static constexpr keel::usize kMeasureCacheMaxInlineBytes = 128u;
     static constexpr keel::u32 kNil = 0xFFFFFFFFu;
+
+    struct MeasureCacheEntry {
+        keel::u64 hash{0};
+        keel::f32 scaledFontSizePx{0.0f};
+        keel::f32 width{0.0f};
+        keel::f32 height{0.0f};
+        keel::u8 style{0};
+        keel::u8 hinting{0};
+        keel::u8 len{0};
+        bool valid{false};
+        char text[kMeasureCacheMaxInlineBytes]{};
+    };
 
     struct FaceSlot {
         void* face{nullptr};
@@ -237,12 +252,89 @@ private:
     void AttachFront(keel::u32 idx) noexcept;
     void MoveToFront(keel::u32 idx) noexcept;
 
+    [[nodiscard]] static keel::u64 HashMeasureKey(
+        keel::StringRef text,
+        keel::u16 sizeQ4,
+        FontStyle style,
+        FontHinting hinting
+    ) noexcept {
+        keel::u64 h = 14695981039346656037ULL;
+        for (keel::usize i = 0u; i < text.size(); ++i) {
+            h ^= keel::as<keel::u8>(text[i]);
+            h *= 1099511628211ULL;
+        }
+        const keel::u64 meta = keel::as<keel::u64>(sizeQ4) |
+            (keel::as<keel::u64>(style) << 16) |
+            (keel::as<keel::u64>(hinting) << 24);
+        h ^= meta * 0x9e3779b97f4a7c15ULL;
+        h ^= h >> 33;
+        return h * 0xff51afd7ed558ccdULL;
+    }
+
+    [[nodiscard]] bool LookupMeasureCache(
+        keel::StringRef text,
+        keel::f32 scaledFontSizePx,
+        keel::u16 sizeQ4,
+        FontStyle style,
+        FontHinting hinting,
+        keel::u64& outHash,
+        keel::usize& outSlot,
+        Vec2& outSize
+    ) const noexcept {
+        if (text.size() > kMeasureCacheMaxInlineBytes) {
+            return false;
+        }
+        outHash = HashMeasureKey(text, sizeQ4, style, hinting);
+        outSlot = keel::as<keel::usize>(outHash & (kMeasureCacheSlots - 1u));
+        if (m_measureCache.empty()) {
+            return false;
+        }
+        const MeasureCacheEntry& e = m_measureCache[outSlot];
+        if (e.valid && e.hash == outHash && e.len == text.size() &&
+            e.style == keel::as<keel::u8>(style) &&
+            e.hinting == keel::as<keel::u8>(hinting) &&
+            e.scaledFontSizePx == scaledFontSizePx &&
+            keel::StringRef(e.text, e.len) == text) {
+            outSize = {e.width, e.height};
+            return true;
+        }
+        return false;
+    }
+
+    void StoreMeasureCache(
+        keel::StringRef text,
+        keel::f32 scaledFontSizePx,
+        FontStyle style,
+        FontHinting hinting,
+        keel::u64 hash,
+        keel::usize slot,
+        Vec2 size
+    ) {
+        if (text.size() > kMeasureCacheMaxInlineBytes) {
+            return;
+        }
+        if (m_measureCache.empty()) {
+            m_measureCache.resize(kMeasureCacheSlots);
+        }
+        MeasureCacheEntry& e = m_measureCache[slot];
+        e.hash = hash;
+        e.scaledFontSizePx = scaledFontSizePx;
+        e.width = size.x;
+        e.height = size.y;
+        e.style = keel::as<keel::u8>(style);
+        e.hinting = keel::as<keel::u8>(hinting);
+        e.len = keel::as<keel::u8>(text.size());
+        keel::mem_copy(e.text, text.data(), text.size());
+        e.valid = true;
+    }
+
     void* m_backend{nullptr};
     keel::StaticArray<FaceSlot, kFontStyleCount> m_faces{};
     keel::Array<FaceSlot> m_fallbackFaces;
 
     keel::Array<GlyphNode> m_glyphNodes;
     keel::HashMap<GlyphKey, keel::u32, GlyphKeyHash> m_glyphMap;
+    keel::Array<MeasureCacheEntry> m_measureCache;
     keel::usize m_totalGlyphBytes{0};
     keel::u32 m_head{kNil};
     keel::u32 m_tail{kNil};

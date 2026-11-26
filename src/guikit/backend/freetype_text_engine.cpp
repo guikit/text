@@ -572,6 +572,13 @@ Vec2 TextEngine::MeasureText(
         return {0.0f, 0.0f};
     }
 
+    keel::u64 cacheHash = 0u;
+    keel::usize cacheSlot = 0u;
+    Vec2 cachedSize{};
+    if (LookupMeasureCache(text, scaledFontSizePx, sizeQ4, style, hinting, cacheHash, cacheSlot, cachedSize)) {
+        return cachedSize;
+    }
+
     FT_Face face = AsFace(rf.slot->face);
     const bool subPhase = UsesSubpixelPhase(hinting);
     const FT_UInt kernMode = subPhase ? FT_KERNING_UNFITTED : FT_KERNING_DEFAULT;
@@ -611,7 +618,9 @@ Vec2 TextEngine::MeasureText(
     const keel::f32 glyphBoxH = (face->units_per_EM > 0u && face->ascender > face->descender)
         ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender - face->descender) / keel::as<keel::f32>(face->units_per_EM))
         : (scaledFontSizePx * 1.25f);
-    return {totalAdvance, glyphBoxH};
+    const Vec2 result{totalAdvance, glyphBoxH};
+    StoreMeasureCache(text, scaledFontSizePx, style, hinting, cacheHash, cacheSlot, result);
+    return result;
 }
 
 bool TextEngine::DrawText(
@@ -784,6 +793,7 @@ bool TextEngine::DrawTextBox(
 void TextEngine::TrimCaches() noexcept {
     m_glyphMap = {};
     m_glyphNodes = {};
+    m_measureCache = {};
     m_totalGlyphBytes = 0u;
     m_head = kNil;
     m_tail = kNil;

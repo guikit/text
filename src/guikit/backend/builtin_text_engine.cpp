@@ -510,6 +510,13 @@ Vec2 TextEngine::MeasureText(
         return {0.0f, 0.0f};
     }
 
+    keel::u64 cacheHash = 0u;
+    keel::usize cacheSlot = 0u;
+    Vec2 cachedSize{};
+    if (LookupMeasureCache(text, scaledFontSizePx, sizeQ4, style, hinting, cacheHash, cacheSlot, cachedSize)) {
+        return cachedSize;
+    }
+
     const keel::font::FontFace* face = AsFontFaceConst(rf.slot->face);
     const keel::f32 qSizePx = keel::as<keel::f32>(sizeQ4) * 0.25f;
     const keel::font::Hinting kHint = ToKeelHinting(hinting);
@@ -544,7 +551,9 @@ Vec2 TextEngine::MeasureText(
     const keel::f32 glyphBoxH = (face->units_per_em() > 0u && face->ascender() > face->descender())
         ? (scaledFontSizePx * keel::as<keel::f32>(face->ascender() - face->descender()) / keel::as<keel::f32>(face->units_per_em()))
         : (scaledFontSizePx * 1.25f);
-    return {totalAdvance, glyphBoxH};
+    const Vec2 result{totalAdvance, glyphBoxH};
+    StoreMeasureCache(text, scaledFontSizePx, style, hinting, cacheHash, cacheSlot, result);
+    return result;
 }
 
 bool TextEngine::DrawText(
@@ -727,6 +736,7 @@ bool TextEngine::DrawTextBox(
 void TextEngine::TrimCaches() noexcept {
     m_glyphMap = {};
     m_glyphNodes = {};
+    m_measureCache = {};
     m_totalGlyphBytes = 0u;
     m_head = kNil;
     m_tail = kNil;

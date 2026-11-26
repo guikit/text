@@ -238,8 +238,21 @@ int main() {
         CHECK(fbEngine.GetFallbackFontCount() == 0u);
     }
 
-    // 9. Cache trimming
+    // 9. MeasureText cache consistency & cache trimming
     CHECK(engine.GetCachedGlyphCount() > 0u);
+    {
+        const Vec2 m1 = engine.MeasureText("Theme Studio — Palette × Chrome", 14.0f, FontStyle::Regular, FontHinting::Light);
+        const Vec2 m2 = engine.MeasureText("Theme Studio — Palette × Chrome", 14.0f, FontStyle::Regular, FontHinting::Light);
+        const Vec2 mLarge = engine.MeasureText("Theme Studio — Palette × Chrome", 20.0f, FontStyle::Regular, FontHinting::Light);
+        const Vec2 mShort = engine.MeasureText("A", 14.0f, FontStyle::Regular, FontHinting::Light);
+        CHECK(m1.x == m2.x && m1.y == m2.y);
+        CHECK(mLarge.x > m1.x && mLarge.y > m1.y);
+        CHECK(mShort.x > 0.0f && mShort.x < m1.x * 0.2f);
+        engine.TrimCaches();
+        CHECK(engine.GetCachedGlyphCount() == 0u);
+        const Vec2 m3 = engine.MeasureText("Theme Studio — Palette × Chrome", 14.0f, FontStyle::Regular, FontHinting::Light);
+        CHECK(m3.x == m1.x && m3.y == m1.y);
+    }
     engine.TrimCaches();
     CHECK(engine.GetCachedGlyphCount() == 0u);
 #endif
